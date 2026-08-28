@@ -418,63 +418,112 @@ O histórico de execução do Glue também permite verificar:
 
 ## 12. FinOps e Otimização de Custos
 
-A arquitetura foi pensada para reduzir armazenamento desnecessário e quantidade de dados lidos durante o processamento analítico.
+A arquitetura foi desenvolvida priorizando serviços gerenciados, processamento sob demanda e redução do volume de dados lidos e armazenados.
 
-### Parquet
+### Custo observado durante o projeto
 
-Os dados tratados são gravados em formato **Parquet**, formato colunar mais eficiente para workloads analíticos.
+Durante a implementação, a conta AWS utilizada estava no **Free Plan**.
 
-Isso reduz a quantidade de dados lidos em consultas quando comparado a formatos textuais como CSV.
+No momento da coleta da evidência, o próprio console da AWS informava que a conta não estava sendo cobrada e que os dados detalhados de custo e uso ainda estavam sendo processados, podendo levar até 24 horas para ficarem disponíveis.
 
-### Compressão Snappy
+Evidência:
 
-No processamento Bronze → Silver, os arquivos Parquet utilizam compressão **Snappy**, reduzindo armazenamento e mantendo boa velocidade de leitura.
+![Billing AWS - Free Plan](docs/evidences/finops/billing-free-plan.png)
 
-### Particionamento
+Por esse motivo, o valor observado durante a execução acadêmica do projeto foi **US$ 0,00 em cobrança efetiva até o momento da documentação**.
 
-Os datasets são particionados conforme a característica de cada tabela.
+Esse valor não deve ser interpretado como o custo permanente da arquitetura em produção, pois depende dos créditos, plano da conta, volume de dados e frequência de execução.
 
-Exemplos:
+### Estimativa de custo
 
-- Silver Batch: `ano`;
-- eventos Streaming: `ano_ingestao`, `mes_ingestao`, `dia_ingestao`;
-- integração híbrida: `ano_referencia`, `nivel`;
-- tabelas Gold: principalmente `ano` ou `ano_meta`.
+Para demonstrar o comportamento de custo fora do cenário acadêmico, foi considerado um exemplo de utilização mensal:
 
-O particionamento reduz a leitura desnecessária de arquivos durante consultas filtradas.
+- 3 jobs AWS Glue;
+- 2 DPUs por job;
+- aproximadamente 2 minutos por execução;
+- 10 execuções mensais de cada job;
+- 100 consultas Athena por mês;
+- baixo volume de eventos SQS/Lambda;
+- volume de logs inferior a 5 GB/mês.
 
-### Serviços Serverless / Gerenciados
+#### AWS Glue
 
-A arquitetura utiliza serviços gerenciados ou serverless, como:
+O AWS Glue cobra por DPU-hora. Considerando **US$ 0,44 por DPU-hora**:
+
+```text
+3 jobs × 10 execuções × 2 DPUs × (2 / 60 hora) × US$ 0,44
+≈ US$ 0,88 / mês
+```
+
+O Glue tende a representar a principal parcela de custo computacional desta arquitetura em um cenário de baixo volume.
+
+#### Amazon Athena
+
+O Athena cobra conforme a quantidade de dados verificados pelas consultas.
+
+O uso de **Parquet, compressão e particionamento** reduz significativamente o volume lido. Considerando consultas pequenas e um volume acadêmico de uso, o custo tende a permanecer muito baixo.
+
+#### AWS Lambda e Amazon SQS
+
+A arquitetura utiliza Lambda e SQS apenas durante o processamento dos eventos simulados. Para o volume acadêmico utilizado, a quantidade de execuções e mensagens é pequena, contribuindo pouco para o custo total da solução.
+
+#### Amazon CloudWatch
+
+O volume de logs produzido pela pipeline é reduzido. O custo depende principalmente da quantidade de logs ingeridos e do período de retenção configurado.
+
+#### Amazon S3
+
+O custo depende do volume armazenado, da quantidade de requisições e da classe de armazenamento.
+
+Como os datasets tratados são armazenados em **Parquet com compressão**, o volume necessário é menor do que seria com o armazenamento analítico exclusivamente em CSV.
+
+### Estimativa consolidada
+
+Para um cenário acadêmico ou de demonstração, com poucas execuções mensais, a arquitetura apresenta um custo operacional estimado **próximo de US$ 1 por mês**, desconsiderando créditos e benefícios do Free Plan.
+
+A estimativa é ilustrativa e pode variar conforme:
+
+- região AWS;
+- volume armazenado;
+- frequência dos jobs;
+- DPUs utilizadas;
+- quantidade e tamanho das consultas;
+- volume de eventos;
+- retenção dos logs.
+
+### Estratégias adotadas para redução de custos
+
+#### Parquet
+
+As camadas tratadas utilizam formato colunar Parquet, reduzindo a quantidade de dados lidos durante consultas analíticas.
+
+#### Compressão Snappy
+
+Os arquivos tratados utilizam compressão Snappy, diminuindo o espaço ocupado sem comprometer significativamente a velocidade de leitura.
+
+#### Particionamento
+
+Os datasets são particionados por campos como ano e data de ingestão, evitando leitura desnecessária de arquivos.
+
+#### Processamento sob demanda
+
+Os jobs AWS Glue são executados somente quando necessário, sem manter infraestrutura computacional ativa permanentemente.
+
+#### Serviços gerenciados e serverless
+
+Foram priorizados serviços como:
 
 - Amazon S3;
 - Amazon Athena;
-- Amazon SQS;
 - AWS Lambda;
+- Amazon SQS;
 - AWS Glue.
 
-Isso evita a necessidade de manter servidores dedicados executando continuamente.
+Essa abordagem reduz a necessidade de manter servidores dedicados continuamente ativos.
 
-### Processamento sob demanda
+#### Camada Gold otimizada
 
-Os jobs Glue são executados quando há necessidade de atualização das camadas, evitando manter recursos computacionais ativos permanentemente.
-
-### Otimização de consultas
-
-A Gold contém datasets já agregados e preparados para consumo analítico. Dessa forma, consultas recorrentes não precisam reprocessar os microdados completos.
-
-### Principais direcionadores de custo
-
-| Serviço | Principal fator de custo | Estratégia adotada |
-|---|---|---|
-| S3 | Volume armazenado | Parquet + compressão |
-| Glue | Tempo de execução / capacidade | Jobs sob demanda |
-| Athena | Volume de dados lidos | Parquet + particionamento + Gold |
-| Lambda | Execuções e duração | Função simples orientada a eventos |
-| SQS | Número de requisições | Mensagens apenas durante simulação |
-| CloudWatch | Ingestão/retenção de logs | Uso focado nos componentes da pipeline |
-
-Para o volume acadêmico e execuções pontuais deste projeto, a arquitetura foi desenhada para manter o consumo reduzido. O custo monetário exato depende da região AWS, volume de dados, quantidade de execuções e retenção dos logs.
+As agregações são realizadas previamente na Gold, evitando que consultas analíticas recorrentes precisem reprocessar os microdados completos.
 
 ---
 
@@ -608,6 +657,8 @@ tech-challenge-alfabetizacao/
 │       ├── monitoring/
 │       │   ├── cloudwatch-log-groups.png
 │       │   └── lambda-log-streams.png
+│       ├── finops/
+│       │   └── billing-free-plan.png
 │       ├── s3/
 │       │   ├── bronze.png
 │       │   ├── silver.png
@@ -740,6 +791,10 @@ sql/quality_checks.sql
 ![Log Groups](docs/evidences/monitoring/cloudwatch-log-groups.png)
 
 ![Lambda Log Streams](docs/evidences/monitoring/lambda-log-streams.png)
+
+### FinOps
+
+![Billing AWS - Free Plan](docs/evidences/finops/billing-free-plan.png)
 
 ---
 
